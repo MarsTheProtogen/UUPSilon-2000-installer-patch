@@ -1,0 +1,169 @@
+#!/bin/sh
+#
+#   UPSilon 2000 Linux installer – *patched for safe quoting*
+#
+
+PROG=rupsd
+INSTALL_DIR="$(pwd)"
+PROGRAM_DIR=/etc/upsilon
+
+echo "Linux 2.x INSTALL FOR UPSilon 2000"
+
+#
+#  Must run this script as root
+#
+uid="$(id | sed 's/^uid=\([0-9][0-9]*\).*$/\1/')"
+if [ "$uid" -ne 0 ]; then
+    echo "Not logged in as root."
+    exit 1
+fi
+
+#
+#  Check source files / glibc
+#
+if [ -s /lib64/libc.so.6 ]; then
+    GLIBC1="$(strings /lib64/libc.so.6 | grep GLIBC_2.2.5)"
+    GLIBC2="$(strings /lib64/libc.so.6 | grep GLIBC_2.3)"
+    GLIBC3="$(strings /lib64/libc.so.6 | grep GLIBC_2.7)"
+
+    [ -z "$GLIBC1" ] && { echo "UPSilon 2000 needs GLIBC_2.2.5"; exit 2; }
+    [ -z "$GLIBC2" ] && { echo "UPSilon 2000 needs GLIBC_2.3";   exit 2; }
+    [ -z "$GLIBC3" ] && { echo "UPSilon 2000 needs GLIBC_2.7";   exit 2; }
+fi
+
+if [ -s /lib64/tls/libc.so.6 ]; then
+    GLIBC="$(strings /lib64/tls/libc.so.6 | grep GLIBC_2.4)"
+    if [ -z "$GLIBC" ]; then
+        echo "UPSilon 2000 needs GLIBC_2.4 – please update your libc"
+        exit 2
+    else
+        echo "Found GLIBC_2.4 runtime library"
+    fi
+fi
+
+# Verify required files exist
+for f in upsilon rupsd email pager shutdown.ini preshut.bat startup.add; do
+    if [ ! -s "$INSTALL_DIR/$f" ]; then
+        echo "Missing File Error: $INSTALL_DIR/$f does not exist."
+        exit 2
+    fi
+done
+
+#
+#  Ensure we’re really on Linux
+#
+UNAME=""
+[ -x /usr/bin/uname ] && UNAME="$(/usr/bin/uname)"
+[ -x /bin/uname  ]   && UNAME="$(/bin/uname)"
+if [ "$UNAME" != "Linux" ]; then
+    echo "OS ERROR: Detected OS is $UNAME – these programs need Linux."
+    exit 1
+fi
+
+echo "UPSilon 2000 will be installed to the directory $PROGRAM_DIR."
+
+#
+#  Stop / back‑up any previous installation
+#
+if [ -s /etc/upsilon/upsilon ]; then
+    /etc/upsilon/upsilon stop
+    sleep 2
+fi
+
+if [ -s "$PROGRAM_DIR/rupsd" ] || [ -s "$PROGRAM_DIR/upsilon" ] || \
+   [ -s "$PROGRAM_DIR/preshut.bat" ]; then
+
+    if [ -s "$PROGRAM_DIR/rupsd" ] && [ -s "$PROGRAM_DIR/upsilon" ]; then
+        echo "Try to stop upsilon daemon ..."
+        "$PROGRAM_DIR/upsilon" stop
+        sleep 2
+    fi
+
+    if [ ! -d "${PROGRAM_DIR}.old" ]; then
+        echo "A previous UPSilon 2000 was found. Moving it to ${PROGRAM_DIR}.old"
+        mv "$PROGRAM_DIR" "${PROGRAM_DIR}.old" || {
+            echo "Please stop the UPSilon 2000 background process and reinstall."
+            echo "Installation not completed!"
+            exit 0
+        }
+    else
+        echo "A previous UPSilon backup already exists at ${PROGRAM_DIR}.old."
+        while true; do
+            printf "Overwrite it (1), keep it (2) or abort (3)? [2]: "
+            read answer
+            [ -z "$answer" ] && answer=2
+            case "$answer" in
+                1)
+                    rm -rf "${PROGRAM_DIR}.old"
+                    mv "$PROGRAM_DIR" "${PROGRAM_DIR}.old" && break
+                    echo "Could not move – daemon still running?  Abort."; exit 0;;
+                2) break ;;
+                3) echo "Installation not completed!"; exit 0 ;;
+                *) echo "Invalid input." ;;
+            esac
+        done
+    fi
+fi
+
+#
+#  Copy files
+#
+[ ! -d "$PROGRAM_DIR" ] && { echo "Create $PROGRAM_DIR ..."; mkdir "$PROGRAM_DIR"; }
+
+echo -n "Moving files from $INSTALL_DIR to $PROGRAM_DIR "
+for f in rupsd upsilon email pager shutdown.ini rups.ini preshut.bat \
+         upsilon.eml upsilon.pgr; do
+    if [ -s "$INSTALL_DIR/$f" ]; then            # ← NEW guard
+        cp "$INSTALL_DIR/$f" "$PROGRAM_DIR" || { echo; echo "copy $f failed"; exit 1; }
+        echo -n "."
+    else
+        echo; echo "Warning: $f not found – skipping."   # ← NEW message
+    fi
+done
+echo "OK."
+
+
+# permissions
+chmod 544 "$PROGRAM_DIR/rupsd"
+chmod 555 "$PROGRAM_DIR/upsilon" "$PROGRAM_DIR/email" "$PROGRAM_DIR/pager"
+chmod 644 "$PROGRAM_DIR/"*.{ini,bat,eml,pgr}
+chmod 666 "$PROGRAM_DIR/help"/* 2>/dev/null
+
+#
+#  Add startup entry
+#
+SYSOS="$(grep -E 'Ubuntu|Debian' /etc/issue 2>/dev/null)"
+STARTUP="/etc/rc.local"
+[ -z "$SYSOS" ] || STARTUP="/etc/rc.local"
+STARTUP_ADD="$INSTALL_DIR/startup.add"
+
+echo "Adding entries to $STARTUP ..."
+cp "$STARTUP" "${STARTUP}.old.upsilon"
+
+# remark any existing un‑commented entries, then append ours
+sed 's#^\(/etc/upsilon\)#\# \1#' "$STARTUP" > "$INSTALL_DIR/startup.tmp"
+cat "$STARTUP_ADD" >> "$INSTALL_DIR/startup.tmp"
+mv "$INSTALL_DIR/startup.tmp" "$STARTUP"
+chmod +x "$STARTUP"
+echo "OK."
+
+read -p "Press ENTER to continue..."
+
+#
+#  Finish – run configuration and start daemon
+#
+"$PROGRAM_DIR/upsilon" reginit
+echo "Configure the parameter."
+sleep 1
+"$PROGRAM_DIR/upsilon" config
+sleep 2
+"$PROGRAM_DIR/upsilon" reginit
+
+echo "Installation completed!"
+echo "Start UPSilon 2000 background process ..."
+"$PROGRAM_DIR/upsilon" start
+
+cd "$INSTALL_DIR"
+sleep 1
+exit 0
+
