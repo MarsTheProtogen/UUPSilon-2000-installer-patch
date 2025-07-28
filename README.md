@@ -1,4 +1,4 @@
-# UUPSilon-2000-installer-patch download
+# UPSilon-2000-installer-patch download
 A patch for Ubuntu 24.04 install script for https://www.megatec.com.tw/software-download/
 # Fix for [UPSilon 2000 v5.5 software installer](https://www.megatec.com.tw/software-download/) for Ubuntu 24.04 / Debian 12 (for UPSilon 2000 UPS)
 
